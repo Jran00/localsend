@@ -1,4 +1,4 @@
-name: Compile APK (Debug Mode)
+name: Compile Optimized APK (Slim & No-Sign)
 
 on:
   workflow_dispatch:
@@ -55,20 +55,28 @@ jobs:
         with:
           toolchain: stable
           override: true
-          # 修复：直接使用 env 变量
           default: true
 
       - name: Dependencies
         working-directory: ${{ env.APK_BUILD_DIR }}/app
         run: flutter pub get
 
-      - name: Build APK (Debug)
-        working-directory: ${{ env.APK_BUILD_DIR }}/app
-        # 使用 --debug 避开签名检查
-        run: flutter build apk --debug
+      # 【关键优化点 1】：强制将 Release 构建指向 Debug 签名，绕过报错
+      - name: Force Debug Signing for Release Build
+        working-directory: ${{ env.APK_BUILD_DIR }}/app/android/app
+        run: |
+          sed -i 's/signingConfig signingConfigs.release/signingConfig signingConfigs.debug/g' build.gradle
 
-      - name: Upload APK
+      # 【关键优化点 2】：使用 --release 模式并拆分架构，极大程度减小体积
+      - name: Build Slim Release APK
+        working-directory: ${{ env.APK_BUILD_DIR }}/app
+        run: flutter build apk --release --split-per-abi
+
+      - name: Upload Optimized APKs
         uses: actions/upload-artifact@v4
         with:
-          name: LocalSend-Debug-APK
-          path: ${{ env.APK_BUILD_DIR }}/app/build/app/outputs/flutter-apk/app-debug.apk
+          name: LocalSend-Slim-APKs
+          path: |
+            ${{ env.APK_BUILD_DIR }}/app/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
+            ${{ env.APK_BUILD_DIR }}/app/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+            ${{ env.APK_BUILD_DIR }}/app/build/app/outputs/flutter-apk/app-x86_64-release.apk
