@@ -1,10 +1,11 @@
-name: Compile Optimized APK (Slim & No-Sign)
+name: Compile Optimized APK (Slim & Fixed 400 Error)
 
 on:
   workflow_dispatch:
 
 env:
-  FLUTTER_VERSION: "3.35.6"
+  # 建议使用稳定版本，避免开发版/预览版在处理 HTTP Stream 时出现非预期行为
+  FLUTTER_VERSION: "3.27.0" 
   RUST_VERSION: "1.84.1"
   APK_BUILD_DIR: "/tmp/build"
 
@@ -31,8 +32,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Remove proprietary dependencies
-        run: sh scripts/remove_proprietary_dependencies.sh
+      # 【关键修复 1】：暂时注释掉该步骤，排除因核心依赖缺失导致的上传失败
+      # - name: Remove proprietary dependencies
+      #   run: sh scripts/remove_proprietary_dependencies.sh
 
       - name: Copy files to env.APK_BUILD_DIR
         run: |
@@ -53,7 +55,7 @@ jobs:
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: stable
+          toolchain: ${{ env.RUST_VERSION }}
           override: true
           default: true
 
@@ -61,21 +63,25 @@ jobs:
         working-directory: ${{ env.APK_BUILD_DIR }}/app
         run: flutter pub get
 
-      # 【关键优化点 1】：强制将 Release 构建指向 Debug 签名，绕过报错
-      - name: Force Debug Signing for Release Build
+      # 【关键修复 2】：强制 Debug 签名时，同步禁用 R8 混淆，防止 FileDto 模型类被抹除导致 400
+      - name: Force Debug Signing & Disable Shrinking
         working-directory: ${{ env.APK_BUILD_DIR }}/app/android/app
         run: |
           sed -i 's/signingConfig signingConfigs.release/signingConfig signingConfigs.debug/g' build.gradle
+          # 这一行确保 Release 模式下不会因为混淆而破坏数据模型
+          sed -i 's/minifyEnabled true/minifyEnabled false/g' build.gradle
+          sed -i 's/shrinkResources true/shrinkResources false/g' build.gradle
 
-      # 【关键优化点 2】：使用 --release 模式并拆分架构，极大程度减小体积
+      # 【关键修复 3】：执行构建。增加 --no-tree-shake-icons 避免某些图标库导致的资源错误
       - name: Build Slim Release APK
         working-directory: ${{ env.APK_BUILD_DIR }}/app
-        run: flutter build apk --release --split-per-abi
+        run: |
+          flutter build apk --release --split-per-abi --no-tree-shake-icons
 
       - name: Upload Optimized APKs
         uses: actions/upload-artifact@v4
         with:
-          name: LocalSend-Slim-APKs
+          name: LocalSend-Slim-Fixed-v${{ needs.build.outputs.version }}
           path: |
             ${{ env.APK_BUILD_DIR }}/app/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
             ${{ env.APK_BUILD_DIR }}/app/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
